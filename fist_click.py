@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FIST CLICK v2.0.0
+FIST CLICK v2.0.1
 Auto Clicker — Multi-spot, Script mode, Follow-mouse, Settings, i18n
 """
 
@@ -11,7 +11,6 @@ import time
 import sys
 import os
 import json
-import ctypes
 
 try:
     import pyautogui
@@ -73,7 +72,6 @@ STR = {
         "sc_del": "− УДАЛИТЬ",
         "sc_up": "↑",
         "sc_dn": "↓",
-        "sc_pick": "ВЫБРАТЬ",
         "sc_delay": "Задержка (мс)",
         "sc_loops": "Повторений (0=∞)",
         "sc_col_n": "#",
@@ -88,7 +86,6 @@ STR = {
         "set_font": "ШРИФТ",
         "set_font_size": "Размер шрифта",
         "set_font_system": "Системные шрифты",
-        "set_font_load": "Загрузить .ttf/.otf",
         "set_theme": "ТЕМА",
         "set_bg": "Фон",
         "set_accent": "Акцент",
@@ -137,7 +134,6 @@ STR = {
         "sc_del": "− DELETE",
         "sc_up": "↑",
         "sc_dn": "↓",
-        "sc_pick": "PICK",
         "sc_delay": "Delay (ms)",
         "sc_loops": "Repeats (0=∞)",
         "sc_col_n": "#",
@@ -152,7 +148,6 @@ STR = {
         "set_font": "FONT",
         "set_font_size": "Font size",
         "set_font_system": "System fonts",
-        "set_font_load": "Load .ttf/.otf",
         "set_theme": "THEME",
         "set_bg": "Background",
         "set_accent": "Accent",
@@ -166,7 +161,6 @@ STR = {
     },
 }
 
-# ── Default config ────────────────────────────────────────────────────────────
 DEFAULT_CFG = {
     "lang": "ru",
     "topmost": True,
@@ -252,58 +246,28 @@ class PickOverlay:
         self.callback(None, None)
 
 
-# ── Progress bar ──────────────────────────────────────────────────────────────
-class GradBar(tk.Canvas):
-    def __init__(self, parent, accent, **kw):
-        bg = kw.pop("bg", "#2C2C2E")
-        super().__init__(parent, height=4, bg=bg, highlightthickness=0, **kw)
-        self._pct = 0.0
-        self._accent = accent
-        self.bind("<Configure>", lambda e: self._draw())
-
-    def set(self, pct):
-        self._pct = max(0.0, min(1.0, pct))
-        self._draw()
-
-    def _draw(self):
-        self.delete("all")
-        w = self.winfo_width()
-        filled = int(w * self._pct)
-        if filled <= 0:
-            return
-        # Parse accent color
-        try:
-            r0 = int(self._accent[1:3], 16)
-            g0 = int(self._accent[3:5], 16)
-            b0 = int(self._accent[5:7], 16)
-        except Exception:
-            r0, g0, b0 = 0xFF, 0x3B, 0x30
-        for x in range(filled):
-            t = x / max(w, 1)
-            r = int(r0 * (1 - t) + 0x30 * t)
-            g = int(g0 * (1 - t) + 0xD1 * t)
-            b = int(b0 * (1 - t) + 0x58 * t)
-            self.create_line(x, 0, x, 4, fill=f"#{r:02x}{g:02x}{b:02x}")
-
-
 # ── Main application ──────────────────────────────────────────────────────────
 class FistClick:
     def __init__(self):
         self.cfg = load_config()
         self._lang = self.cfg.get("lang", "ru")
         self.spots = [ClickSpot() for _ in range(MAX_SPOTS)]
-        self.script_steps: list[ScriptStep] = []
+        self.script_steps = []
         self.running = False
         self.click_thread = None
         self.hotkey = self.cfg.get("hotkey", "f6")
         self.hotkey_listener = None
-        self._mode = "spots"   # spots | follow | script
-        self._follow_btn = tk.StringVar()
-        self._follow_type = tk.StringVar()
-        self._time_mode = tk.StringVar()
+        self._mode = "spots"
 
+        # ── ВАЖНО: tk.Tk() ПЕРВЫМ, StringVar — только после него ─────────────
         self.root = tk.Tk()
-        self._apply_theme()
+
+        # Только здесь создаём StringVar — после Tk()
+        self._follow_btn  = tk.StringVar(value="left")
+        self._follow_type = tk.StringVar(value="single")
+        self._time_mode   = tk.StringVar(value="infinite")
+
+        self.root.configure(bg=self.C("bg"))
         self.root.title(self.t("title"))
         self.root.resizable(False, False)
         self.root.attributes("-topmost", self.cfg.get("topmost", True))
@@ -320,9 +284,6 @@ class FistClick:
     def C(self, key):
         return self.cfg.get(key, DEFAULT_CFG.get(key, "#888888"))
 
-    def _apply_theme(self):
-        self.root.configure(bg=self.C("bg")) if hasattr(self, "root") and self.root.winfo_exists() else None
-
     def _font(self, size=None, bold=False):
         fam = self.cfg.get("font_family", "Courier New")
         sz  = size or self.cfg.get("font_size", 9)
@@ -331,8 +292,8 @@ class FistClick:
 
     def _center(self):
         self.root.update_idletasks()
-        w = self.root.winfo_width()
-        h = self.root.winfo_height()
+        w  = self.root.winfo_width()
+        h  = self.root.winfo_height()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"+{(sw-w)//2}+{(sh-h)//2}")
@@ -340,35 +301,20 @@ class FistClick:
     def _sep(self, parent):
         tk.Frame(parent, bg=self.C("border"), height=1).pack(fill="x", padx=20, pady=8)
 
-    def _lbl(self, parent, key, size=None, bold=False, fg=None, **kw):
-        return tk.Label(parent, text=self.t(key),
-                        font=self._font(size, bold),
-                        fg=fg or self.C("text2"),
-                        bg=self.C("bg"), **kw)
-
-    def _btn(self, parent, key, cmd, bg=None, fg=None, pad=8, **kw):
-        return tk.Button(parent,
-                         text=self.t(key),
-                         font=self._font(bold=True),
-                         fg=fg or self.C("bg"),
-                         bg=bg or self.C("accent"),
-                         activebackground=self.C("border"),
-                         activeforeground=self.C("text"),
-                         relief="flat", bd=0, padx=pad, pady=4,
-                         cursor="hand2", command=cmd, **kw)
-
-    def _radio(self, parent, text, var, val, cmd=None, **kw):
+    def _radio(self, parent, text, var, val, cmd=None, bg_key="card", **kw):
+        bg = self.C(bg_key)
         return tk.Radiobutton(parent, text=text, variable=var, value=val,
                               font=self._font(bold=True),
-                              fg=self.C("text"), bg=self.C("card"),
+                              fg=self.C("text"), bg=bg,
                               selectcolor=self.C("accent"),
-                              activebackground=self.C("card"),
+                              activebackground=bg,
                               relief="flat", bd=0, cursor="hand2",
                               indicatoron=0, padx=6, pady=2,
                               command=cmd, **kw)
 
-    def _spin(self, parent, from_, to, label, default=0):
-        frame = tk.Frame(parent, bg=self.C("bg"))
+    def _spin(self, parent, from_, to, label, default=0, bg_key="bg"):
+        bg = self.C(bg_key)
+        frame = tk.Frame(parent, bg=bg)
         frame.pack(side="left")
         var = tk.StringVar(value=str(default).zfill(2 if to < 100 else 3))
         sb = tk.Spinbox(frame, from_=from_, to=to, textvariable=var,
@@ -382,40 +328,37 @@ class FistClick:
                         format="%02.0f" if to < 100 else "%03.0f")
         sb.pack()
         tk.Label(frame, text=label, font=self._font(7),
-                 fg=self.C("text3"), bg=self.C("bg")).pack()
+                 fg=self.C("text3"), bg=bg).pack()
         return var
 
     # ── build UI ──────────────────────────────────────────────────────────────
     def _build(self):
-        bg  = self.C("bg")
-        card = self.C("card")
+        bg   = self.C("bg")
         root = self.root
         root.configure(bg=bg)
 
-        # ── Title bar ─────────────────────────────────────────────────────────
+        # Title bar
         title_bar = tk.Frame(root, bg=bg, pady=14)
         title_bar.pack(fill="x", padx=20)
-
         tk.Label(title_bar, text="FIST",
                  font=self._font(22, True), fg=self.C("accent"), bg=bg).pack(side="left")
         tk.Label(title_bar, text=" CLICK",
                  font=self._font(22, True), fg=self.C("text"), bg=bg).pack(side="left")
         tk.Label(title_bar, text="  v2.0",
-                 font=self._font(8), fg=self.C("text3"), bg=bg).pack(side="left", pady=(8,0))
+                 font=self._font(8), fg=self.C("text3"), bg=bg).pack(side="left", pady=(8, 0))
 
-        self._status_dot = tk.Label(title_bar, text="●",
+        self._status_dot = tk.Label(title_bar, text="\u25cf",
                                     font=self._font(13), fg=self.C("text3"), bg=bg)
-        self._status_dot.pack(side="right", padx=(0,4))
+        self._status_dot.pack(side="right", padx=(0, 4))
         self._status_lbl = tk.Label(title_bar, text=self.t("idle"),
                                     font=self._font(8, True), fg=self.C("text3"), bg=bg)
         self._status_lbl.pack(side="right")
 
         self._sep(root)
 
-        # ── Tab bar ───────────────────────────────────────────────────────────
+        # Tab bar
         tab_bar = tk.Frame(root, bg=bg)
-        tab_bar.pack(fill="x", padx=20, pady=(0,10))
-
+        tab_bar.pack(fill="x", padx=20, pady=(0, 10))
         self._tab_btns = {}
         self._tabs = {}
         for key, lbl_key in [("spots", "tab_spots"), ("follow", "tab_follow"),
@@ -425,24 +368,23 @@ class FistClick:
                           relief="flat", bd=0, padx=12, pady=6,
                           cursor="hand2",
                           command=lambda k=key: self._show_tab(k))
-            b.pack(side="left", padx=(0,2))
+            b.pack(side="left", padx=(0, 2))
             self._tab_btns[key] = b
 
-        # ── Content frame ─────────────────────────────────────────────────────
+        # Content
         self._content = tk.Frame(root, bg=bg)
-        self._content.pack(fill="both", expand=True, padx=0)
+        self._content.pack(fill="both", expand=True)
 
         self._build_spots_tab()
         self._build_follow_tab()
         self._build_script_tab()
         self._build_settings_tab()
-
         self._show_tab("spots")
 
-        # ── Bottom bar ────────────────────────────────────────────────────────
+        # Bottom controls
         self._sep(root)
         ctrl = tk.Frame(root, bg=bg)
-        ctrl.pack(fill="x", padx=20, pady=(0,6))
+        ctrl.pack(fill="x", padx=20, pady=(0, 6))
 
         self._start_btn = tk.Button(ctrl, text=self.t("start"),
                                     font=self._font(12, True),
@@ -451,7 +393,7 @@ class FistClick:
                                     activeforeground=self.C("bg"),
                                     relief="flat", bd=0, pady=11,
                                     cursor="hand2", command=self._start)
-        self._start_btn.pack(side="left", fill="x", expand=True, padx=(0,6))
+        self._start_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
         self._stop_btn = tk.Button(ctrl, text=self.t("stop"),
                                    font=self._font(12, True),
@@ -464,8 +406,7 @@ class FistClick:
         self._stop_btn.pack(side="left", fill="x", expand=True)
 
         self._click_count = 0
-        self._counter_lbl = tk.Label(root,
-                                     text=f"{self.t('clicks')}: 0",
+        self._counter_lbl = tk.Label(root, text=f"{self.t('clicks')}: 0",
                                      font=self._font(7),
                                      fg=self.C("text3"), bg=bg)
         self._counter_lbl.pack(pady=(2, 10))
@@ -478,7 +419,7 @@ class FistClick:
 
         tk.Label(f, text=self.t("spots_label"),
                  font=self._font(8, True), fg=self.C("text2"), bg=bg
-                 ).pack(anchor="w", padx=20, pady=(4,6))
+                 ).pack(anchor="w", padx=20, pady=(4, 6))
 
         grid = tk.Frame(f, bg=bg)
         grid.pack(fill="x", padx=20)
@@ -487,8 +428,8 @@ class FistClick:
             card = self._make_spot_card(grid, i, spot)
             row, col = divmod(i, 2)
             card.grid(row=row, column=col,
-                      padx=(0 if col==0 else 5, 0),
-                      pady=(0 if row==0 else 5, 0),
+                      padx=(0 if col == 0 else 5, 0),
+                      pady=(0 if row == 0 else 5, 0),
                       sticky="nsew")
             self._spot_cards.append(card)
         grid.columnconfigure(0, weight=1)
@@ -498,14 +439,13 @@ class FistClick:
         self._build_common_settings(f)
 
     def _make_spot_card(self, parent, index, spot):
-        bg   = self.C("card")
-        bdr  = self.C("border")
+        bg  = self.C("card")
+        bdr = self.C("border")
         card = tk.Frame(parent, bg=bg, padx=10, pady=8,
                         highlightbackground=bdr, highlightthickness=1)
 
-        # Header
         hdr = tk.Frame(card, bg=bg)
-        hdr.pack(fill="x", pady=(0,6))
+        hdr.pack(fill="x", pady=(0, 6))
         tk.Label(hdr, text=f"{self.t('spot')} {index+1}",
                  font=self._font(8, True), fg=self.C("accent"), bg=bg).pack(side="left")
 
@@ -517,10 +457,9 @@ class FistClick:
                        command=lambda: self._toggle_spot(spot, en_var)
                        ).pack(side="right")
 
-        # Coords
         crow = tk.Frame(card, bg=bg)
-        crow.pack(fill="x", pady=(0,6))
-        coord_lbl = tk.Label(crow, text="X: —   Y: —",
+        crow.pack(fill="x", pady=(0, 6))
+        coord_lbl = tk.Label(crow, text="X: \u2014   Y: \u2014",
                              font=self._font(10, True),
                              fg=self.C("text"), bg=bg, width=14, anchor="w")
         coord_lbl.pack(side="left")
@@ -528,12 +467,10 @@ class FistClick:
                   font=self._font(7, True),
                   fg=self.C("bg"), bg=self.C("accent"),
                   activebackground=self.C("border"),
-                  relief="flat", bd=0, padx=6, pady=2,
-                  cursor="hand2",
+                  relief="flat", bd=0, padx=6, pady=2, cursor="hand2",
                   command=lambda s=spot, cl=coord_lbl: self._pick_spot(s, cl)
                   ).pack(side="right")
 
-        # Options row
         opt = tk.Frame(card, bg=bg)
         opt.pack(fill="x")
         tk.Label(opt, text="BTN", font=self._font(7),
@@ -542,17 +479,19 @@ class FistClick:
         btn_var = tk.StringVar(value=spot.button)
         for val, lbl in [("left", self.t("btn_left")), ("right", self.t("btn_right"))]:
             self._radio(opt, lbl, btn_var, val,
-                        cmd=lambda v=btn_var, s=spot: setattr(s, "button", v.get())
-                        ).pack(side="left", padx=(4,0))
+                        cmd=lambda v=btn_var, s=spot: setattr(s, "button", v.get()),
+                        bg_key="card"
+                        ).pack(side="left", padx=(4, 0))
 
-        tk.Label(opt, text="  ×", font=self._font(7),
-                 fg=self.C("text2"), bg=bg).pack(side="left", padx=(8,0))
+        tk.Label(opt, text="  \u00d7", font=self._font(7),
+                 fg=self.C("text2"), bg=bg).pack(side="left", padx=(8, 0))
 
         type_var = tk.StringVar(value=spot.click_type)
         for val, lbl in [("single", self.t("type_single")), ("double", self.t("type_double"))]:
             self._radio(opt, lbl, type_var, val,
-                        cmd=lambda v=type_var, s=spot: setattr(s, "click_type", v.get())
-                        ).pack(side="left", padx=(3,0))
+                        cmd=lambda v=type_var, s=spot: setattr(s, "click_type", v.get()),
+                        bg_key="card"
+                        ).pack(side="left", padx=(3, 0))
 
         return card
 
@@ -581,39 +520,35 @@ class FistClick:
 
         tk.Label(f, text=self.t("follow_title"),
                  font=self._font(10, True), fg=self.C("accent"), bg=bg
-                 ).pack(anchor="w", padx=20, pady=(10,4))
+                 ).pack(anchor="w", padx=20, pady=(10, 4))
         tk.Label(f, text=self.t("follow_desc"),
                  font=self._font(8), fg=self.C("text2"), bg=bg,
                  wraplength=420, justify="left"
-                 ).pack(anchor="w", padx=20, pady=(0,12))
+                 ).pack(anchor="w", padx=20, pady=(0, 12))
 
         card = tk.Frame(f, bg=self.C("card"),
                         highlightbackground=self.C("border"), highlightthickness=1)
-        card.pack(fill="x", padx=20, pady=(0,10))
+        card.pack(fill="x", padx=20, pady=(0, 10))
         inner = tk.Frame(card, bg=self.C("card"), padx=12, pady=10)
         inner.pack(fill="x")
 
-        # Button
         row1 = tk.Frame(inner, bg=self.C("card"))
-        row1.pack(fill="x", pady=(0,6))
+        row1.pack(fill="x", pady=(0, 6))
         tk.Label(row1, text=self.t("follow_btn"),
                  font=self._font(8, True), fg=self.C("text2"),
                  bg=self.C("card"), width=10, anchor="w").pack(side="left")
-        self._follow_btn.set("left")
         for val, lbl in [("left", self.t("btn_left")), ("right", self.t("btn_right"))]:
-            self._radio(inner if False else row1, lbl, self._follow_btn, val
-                        ).pack(side="left", padx=(4,0))
+            self._radio(row1, lbl, self._follow_btn, val, bg_key="card"
+                        ).pack(side="left", padx=(4, 0))
 
-        # Type
         row2 = tk.Frame(inner, bg=self.C("card"))
         row2.pack(fill="x")
         tk.Label(row2, text=self.t("follow_type"),
                  font=self._font(8, True), fg=self.C("text2"),
                  bg=self.C("card"), width=10, anchor="w").pack(side="left")
-        self._follow_type.set("single")
         for val, lbl in [("single", self.t("type_single")), ("double", self.t("type_double"))]:
-            self._radio(row2, lbl, self._follow_type, val
-                        ).pack(side="left", padx=(4,0))
+            self._radio(row2, lbl, self._follow_type, val, bg_key="card"
+                        ).pack(side="left", padx=(4, 0))
 
         self._sep(f)
         self._build_common_settings(f)
@@ -626,15 +561,14 @@ class FistClick:
 
         tk.Label(f, text=self.t("script_title"),
                  font=self._font(10, True), fg=self.C("accent"), bg=bg
-                 ).pack(anchor="w", padx=20, pady=(10,4))
+                 ).pack(anchor="w", padx=20, pady=(10, 4))
         tk.Label(f, text=self.t("script_desc"),
                  font=self._font(8), fg=self.C("text2"), bg=bg,
                  wraplength=420, justify="left"
-                 ).pack(anchor="w", padx=20, pady=(0,8))
+                 ).pack(anchor="w", padx=20, pady=(0, 8))
 
-        # Toolbar
         tb = tk.Frame(f, bg=bg)
-        tb.pack(fill="x", padx=20, pady=(0,6))
+        tb.pack(fill="x", padx=20, pady=(0, 6))
         for key, cmd in [("sc_add", self._sc_add), ("sc_del", self._sc_del),
                          ("sc_up", self._sc_up), ("sc_dn", self._sc_dn)]:
             tk.Button(tb, text=self.t(key),
@@ -643,17 +577,16 @@ class FistClick:
                       activebackground=self.C("border"),
                       relief="flat", bd=0, padx=10, pady=4,
                       cursor="hand2", command=cmd
-                      ).pack(side="left", padx=(0,4))
+                      ).pack(side="left", padx=(0, 4))
 
-        # Table frame
         tbl_frame = tk.Frame(f, bg=self.C("card"),
                              highlightbackground=self.C("border"), highlightthickness=1)
-        tbl_frame.pack(fill="both", expand=True, padx=20, pady=(0,8))
+        tbl_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
 
-        cols = ("n", "x", "y", "btn", "type", "delay")
+        cols     = ("n", "x", "y", "btn", "type", "delay")
         col_keys = ("sc_col_n", "sc_col_x", "sc_col_y",
                     "sc_col_btn", "sc_col_type", "sc_col_delay")
-        col_w = (30, 60, 60, 70, 60, 80)
+        col_w    = (30, 60, 60, 70, 60, 80)
 
         style = ttk.Style()
         style.configure("Script.Treeview",
@@ -676,18 +609,17 @@ class FistClick:
             self._sc_tree.heading(c, text=self.t(k))
             self._sc_tree.column(c, width=w, anchor="center")
 
-        sb = ttk.Scrollbar(tbl_frame, orient="vertical",
-                           command=self._sc_tree.yview)
-        self._sc_tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        sb_tree = ttk.Scrollbar(tbl_frame, orient="vertical",
+                                command=self._sc_tree.yview)
+        self._sc_tree.configure(yscrollcommand=sb_tree.set)
+        sb_tree.pack(side="right", fill="y")
         self._sc_tree.pack(fill="both", expand=True)
 
-        # Loops
         lp_row = tk.Frame(f, bg=bg)
-        lp_row.pack(fill="x", padx=20, pady=(0,6))
+        lp_row.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(lp_row, text=self.t("sc_loops"),
                  font=self._font(8), fg=self.C("text2"), bg=bg
-                 ).pack(side="left", padx=(0,8))
+                 ).pack(side="left", padx=(0, 8))
         self._sc_loops_var = tk.StringVar(value="1")
         tk.Spinbox(lp_row, from_=0, to=9999, textvariable=self._sc_loops_var,
                    width=6, font=self._font(),
@@ -705,7 +637,7 @@ class FistClick:
         self._sc_tree.delete(*self._sc_tree.get_children())
         for i, s in enumerate(self.script_steps):
             self._sc_tree.insert("", "end", values=(
-                i+1, s.x, s.y, s.button, s.click_type, s.delay_ms
+                i + 1, s.x, s.y, s.button, s.click_type, s.delay_ms
             ))
 
     def _sc_add(self):
@@ -741,7 +673,7 @@ class FistClick:
 
     def _sc_dn(self):
         i = self._sc_sel_index()
-        if i is not None and i < len(self.script_steps)-1:
+        if i is not None and i < len(self.script_steps) - 1:
             self.script_steps[i], self.script_steps[i+1] = \
                 self.script_steps[i+1], self.script_steps[i]
             self._sc_refresh()
@@ -760,20 +692,20 @@ class FistClick:
         canvas.pack(side="left", fill="both", expand=True)
 
         inner = tk.Frame(canvas, bg=bg)
-        win_id = canvas.create_window((0,0), window=inner, anchor="nw")
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
         inner.bind("<MouseWheel>",
-                   lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+                   lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
-        p = inner  # alias
+        p = inner
 
         def sec(key):
             tk.Label(p, text=self.t(key),
                      font=self._font(8, True), fg=self.C("text2"), bg=bg
-                     ).pack(anchor="w", padx=20, pady=(12,4))
+                     ).pack(anchor="w", padx=20, pady=(12, 4))
 
         def row():
             r = tk.Frame(p, bg=bg)
@@ -789,7 +721,7 @@ class FistClick:
                            font=self._font(),
                            fg=self.C("text"), bg=bg, selectcolor=bg,
                            activebackground=bg, relief="flat", bd=0, cursor="hand2"
-                           ).pack(side="left", padx=(0,12))
+                           ).pack(side="left", padx=(0, 12))
 
         # Topmost
         sec("set_topmost")
@@ -805,7 +737,8 @@ class FistClick:
         # Hotkey
         sec("set_hotkey_start")
         hkr = row()
-        self._hk_lbl = tk.Label(hkr, text=self.hotkey.upper(),
+        self._hk_lbl = tk.Label(hkr,
+                                 text=(self.hotkey.upper() if self.hotkey else "\u2014"),
                                  font=self._font(bold=True),
                                  fg=self.C("accent"), bg=self.C("card"),
                                  padx=10, pady=4, relief="flat")
@@ -816,41 +749,38 @@ class FistClick:
                                      activebackground=self.C("border"),
                                      relief="flat", bd=0, padx=8, pady=3,
                                      cursor="hand2", command=self._capture_hotkey)
-        self._hk_set_btn.pack(side="left", padx=(6,0))
+        self._hk_set_btn.pack(side="left", padx=(6, 0))
         tk.Button(hkr, text=self.t("clear"),
                   font=self._font(bold=True),
                   fg=self.C("text2"), bg=self.C("card"),
                   activebackground=self.C("border"),
                   relief="flat", bd=0, padx=8, pady=3,
                   cursor="hand2", command=self._clear_hotkey
-                  ).pack(side="left", padx=(4,0))
+                  ).pack(side="left", padx=(4, 0))
 
         # Font
         sec("set_font")
         fr = row()
         tk.Label(fr, text=self.t("set_font_size"),
                  font=self._font(8), fg=self.C("text2"), bg=bg
-                 ).pack(side="left", padx=(0,6))
+                 ).pack(side="left", padx=(0, 6))
         self._font_size_var = tk.StringVar(value=str(self.cfg.get("font_size", 9)))
         tk.Spinbox(fr, from_=7, to=16, textvariable=self._font_size_var,
                    width=4, font=self._font(),
                    fg=self.C("text"), bg=self.C("card"),
                    insertbackground=self.C("text"),
                    relief="flat", bd=1,
-                   highlightbackground=self.C("border"),
-                   highlightthickness=1
+                   highlightbackground=self.C("border"), highlightthickness=1
                    ).pack(side="left")
 
         fr2 = row()
         tk.Label(fr2, text=self.t("set_font_system"),
                  font=self._font(8), fg=self.C("text2"), bg=bg
-                 ).pack(side="left", padx=(0,6))
-        avail = list(tkfont.families())
-        avail.sort()
+                 ).pack(side="left", padx=(0, 6))
+        avail = sorted(tkfont.families())
         self._font_fam_var = tk.StringVar(value=self.cfg.get("font_family", "Courier New"))
-        cb = ttk.Combobox(fr2, textvariable=self._font_fam_var,
-                          values=avail, width=22, state="readonly")
-        cb.pack(side="left")
+        ttk.Combobox(fr2, textvariable=self._font_fam_var,
+                     values=avail, width=22, state="readonly").pack(side="left")
 
         # Theme
         sec("set_theme")
@@ -860,9 +790,8 @@ class FistClick:
                      font=self._font(8), fg=self.C("text2"), bg=bg,
                      width=16, anchor="w").pack(side="left")
             cur_color = self.cfg.get(cfg_key, DEFAULT_CFG[cfg_key])
-            swatch = tk.Label(cr, bg=cur_color, width=4, relief="flat",
-                              cursor="hand2")
-            swatch.pack(side="left", padx=(0,6), ipady=8)
+            swatch = tk.Label(cr, bg=cur_color, width=4, relief="flat", cursor="hand2")
+            swatch.pack(side="left", padx=(0, 6), ipady=8)
             swatch.bind("<Button-1>",
                         lambda e, k=cfg_key, sw=swatch: self._pick_color(k, sw))
 
@@ -875,7 +804,7 @@ class FistClick:
                   activebackground="#25A244",
                   relief="flat", bd=0, padx=16, pady=6,
                   cursor="hand2", command=self._save_settings
-                  ).pack(side="left", padx=(0,8))
+                  ).pack(side="left", padx=(0, 8))
         tk.Button(btn_row, text=self.t("set_reset"),
                   font=self._font(bold=True),
                   fg=self.C("text"), bg=self.C("card"),
@@ -906,7 +835,7 @@ class FistClick:
 
     def _clear_hotkey(self):
         self.hotkey = ""
-        self._hk_lbl.config(text="—", fg=self.C("text3"))
+        self._hk_lbl.config(text="\u2014", fg=self.C("text3"))
         if self.hotkey_listener:
             try:
                 self.hotkey_listener.stop()
@@ -915,16 +844,15 @@ class FistClick:
             self.hotkey_listener = None
 
     def _save_settings(self):
-        self.cfg["lang"] = self._lang_var.get()
-        self.cfg["topmost"] = self._topmost_var.get()
-        self.cfg["hotkey"] = self.hotkey
+        self.cfg["lang"]        = self._lang_var.get()
+        self.cfg["topmost"]     = self._topmost_var.get()
+        self.cfg["hotkey"]      = self.hotkey
         try:
             self.cfg["font_size"] = int(self._font_size_var.get())
         except Exception:
             pass
         self.cfg["font_family"] = self._font_fam_var.get()
         save_config(self.cfg)
-        # Apply topmost immediately
         self.root.attributes("-topmost", self.cfg["topmost"])
         self._start_hk_listener()
         messagebox.showinfo("FIST CLICK", self.t("saved"))
@@ -934,54 +862,45 @@ class FistClick:
         save_config(self.cfg)
         messagebox.showinfo("FIST CLICK", self.t("saved"))
 
-    # ── Common settings (interval, duration, hotkey display) ──────────────────
+    # ── Common settings ───────────────────────────────────────────────────────
     def _build_common_settings(self, parent):
         bg = self.C("bg")
 
-        # Interval
         ivl = tk.Frame(parent, bg=bg)
-        ivl.pack(fill="x", padx=20, pady=(0,6))
+        ivl.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(ivl, text=self.t("interval"),
                  font=self._font(8, True), fg=self.C("text2"), bg=bg,
                  width=14, anchor="w").pack(side="left")
         self._ivl_h  = self._spin(ivl, 0, 23, "h")
-        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg,
-                 font=self._font(11)).pack(side="left")
+        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg, font=self._font(11)).pack(side="left")
         self._ivl_m  = self._spin(ivl, 0, 59, "m")
-        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg,
-                 font=self._font(11)).pack(side="left")
+        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg, font=self._font(11)).pack(side="left")
         self._ivl_s  = self._spin(ivl, 0, 59, "s", default=1)
-        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg,
-                 font=self._font(11)).pack(side="left")
+        tk.Label(ivl, text=":", fg=self.C("text2"), bg=bg, font=self._font(11)).pack(side="left")
         self._ivl_ms = self._spin(ivl, 0, 999, "ms")
 
-        # Duration mode
         dur = tk.Frame(parent, bg=bg)
-        dur.pack(fill="x", padx=20, pady=(0,6))
+        dur.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(dur, text=self.t("duration"),
                  font=self._font(8, True), fg=self.C("text2"), bg=bg,
                  width=14, anchor="w").pack(side="left")
-        self._time_mode.set("infinite")
         for val, key in [("infinite", "infinite"), ("timer", "timer")]:
             tk.Radiobutton(dur, text=self.t(key), variable=self._time_mode, value=val,
                            font=self._font(bold=True),
                            fg=self.C("text"), bg=bg, selectcolor=bg,
                            activebackground=bg, relief="flat", bd=0,
                            cursor="hand2", indicatoron=0, padx=8, pady=3
-                           ).pack(side="left", padx=(0,4))
+                           ).pack(side="left", padx=(0, 4))
 
-        # Timer duration
         tmr = tk.Frame(parent, bg=bg)
-        tmr.pack(fill="x", padx=20, pady=(0,6))
+        tmr.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(tmr, text=self.t("timer_dur"),
                  font=self._font(8, True), fg=self.C("text2"), bg=bg,
                  width=14, anchor="w").pack(side="left")
         self._tmr_h = self._spin(tmr, 0, 23, "h")
-        tk.Label(tmr, text=":", fg=self.C("text2"), bg=bg,
-                 font=self._font(11)).pack(side="left")
+        tk.Label(tmr, text=":", fg=self.C("text2"), bg=bg, font=self._font(11)).pack(side="left")
         self._tmr_m = self._spin(tmr, 0, 59, "m")
-        tk.Label(tmr, text=":", fg=self.C("text2"), bg=bg,
-                 font=self._font(11)).pack(side="left")
+        tk.Label(tmr, text=":", fg=self.C("text2"), bg=bg, font=self._font(11)).pack(side="left")
         self._tmr_s = self._spin(tmr, 0, 59, "s", default=10)
 
     # ── Tab switching ─────────────────────────────────────────────────────────
@@ -1018,7 +937,7 @@ class FistClick:
         self.hotkey_listener.daemon = True
         self.hotkey_listener.start()
 
-    # ── Start / Stop / Toggle ─────────────────────────────────────────────────
+    # ── Start / Stop ──────────────────────────────────────────────────────────
     def _toggle(self):
         if self.running:
             self._stop()
@@ -1074,10 +993,8 @@ class FistClick:
         ))
 
     def _update_counter(self):
-        self._counter_lbl.config(
-            text=f"{self.t('clicks')}: {self._click_count:,}")
+        self._counter_lbl.config(text=f"{self.t('clicks')}: {self._click_count:,}")
 
-    # ── Interval helper ───────────────────────────────────────────────────────
     def _get_interval(self):
         try:
             iv = (int(self._ivl_h.get()) * 3600 +
@@ -1103,7 +1020,7 @@ class FistClick:
     def _loop_spots(self):
         interval = self._get_interval()
         end_time = self._get_end_time()
-        active = [s for s in self.spots if s.enabled and s.x is not None]
+        active   = [s for s in self.spots if s.enabled and s.x is not None]
         while self.running:
             if end_time and time.time() >= end_time:
                 self.root.after(0, self._stop)
@@ -1125,8 +1042,8 @@ class FistClick:
     def _loop_follow(self):
         interval = self._get_interval()
         end_time = self._get_end_time()
-        btn  = self._follow_btn.get() or "left"
-        typ  = self._follow_type.get() or "single"
+        btn = self._follow_btn.get() or "left"
+        typ = self._follow_type.get() or "single"
         while self.running:
             if end_time and time.time() >= end_time:
                 self.root.after(0, self._stop)
@@ -1149,7 +1066,7 @@ class FistClick:
             loops = int(self._sc_loops_var.get())
         except Exception:
             loops = 1
-        infinite = (loops == 0)
+        infinite  = (loops == 0)
         iteration = 0
         while self.running:
             if end_time and time.time() >= end_time:
