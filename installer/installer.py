@@ -1,5 +1,5 @@
 """
-FIST CLICK — Установщик
+FIST CLICK — Установщик v1.0.2
 Скачивает, устанавливает зависимости и собирает FIST_CLICK.exe
 """
 
@@ -11,7 +11,7 @@ import os
 import zipfile
 import shutil
 import urllib.request
-import winreg  # Windows only
+import winreg
 
 # ─────────────────────────────────────────────────────────────────────────────
 REPO_OWNER = "Achinsky"
@@ -33,7 +33,6 @@ C = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def find_python():
-    """Finds python.exe in PATH and Windows registry."""
     for cmd in ("py", "python", "python3"):
         try:
             r = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=5)
@@ -64,11 +63,12 @@ def find_python():
     return None
 
 
-def pip_install(python, packages, log_fn):
-    log_fn(f"  pip install {' '.join(packages)}")
+def pip_install(python, packages):
+    """pip install без живого лога — быстрые пакеты."""
     result = subprocess.run(
         [python, "-m", "pip", "install", "--upgrade", *packages],
-        capture_output=True, text=True, timeout=300
+        capture_output=True, text=True, timeout=300,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     if result.returncode != 0:
         raise RuntimeError(f"pip error:\n{result.stderr[-500:]}")
@@ -79,11 +79,7 @@ def pip_install(python, packages, log_fn):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ProgressBar(tk.Canvas):
-    """Градиентный прогресс-бар на Canvas.
-    bg НЕ передаётся в __init__ — берётся из kw или дефолт bar_bg.
-    """
     def __init__(self, parent, **kw):
-        # Извлекаем bg из kw чтобы не было конфликта при передаче в super()
         bg = kw.pop("bg", C["bar_bg"])
         super().__init__(parent, height=6, bg=bg, highlightthickness=0, **kw)
         self._pct = 0
@@ -106,6 +102,50 @@ class ProgressBar(tk.Canvas):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  LOG WIDGET  — терминал с живым выводом
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LogBox(tk.Frame):
+    def __init__(self, parent, **kw):
+        super().__init__(parent, bg=C["card"],
+                         highlightbackground=C["border"], highlightthickness=1,
+                         **kw)
+        self._text = tk.Text(
+            self, height=7,
+            font=("Courier New", 8),
+            fg=C["text2"], bg=C["card"],
+            relief="flat", bd=0,
+            state="disabled",
+            wrap="char",
+            insertbackground=C["text"],
+        )
+        sb = tk.Scrollbar(self, command=self._text.yview,
+                          bg=C["border"], troughcolor=C["card"],
+                          activebackground=C["text3"],
+                          relief="flat", bd=0, width=8)
+        self._text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self._text.pack(side="left", fill="both", expand=True, padx=6, pady=4)
+
+    def append(self, line: str):
+        """Добавить строку. Можно вызывать из любого потока."""
+        def _do():
+            self._text.configure(state="normal")
+            self._text.insert("end", line + "\n")
+            self._text.see("end")
+            self._text.configure(state="disabled")
+        try:
+            self._text.after(0, _do)
+        except Exception:
+            pass
+
+    def clear(self):
+        self._text.configure(state="normal")
+        self._text.delete("1.0", "end")
+        self._text.configure(state="disabled")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN INSTALLER
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -116,7 +156,7 @@ class Installer:
         self.root.configure(bg=C["bg"])
         self.root.resizable(False, False)
         self.root.attributes("-topmost", True)
-        self._center(500, 560)
+        self._center(520, 680)
         self._build_ui()
         self.root.mainloop()
 
@@ -125,29 +165,27 @@ class Installer:
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
+    # ─────────────────────────────────────────────────────────────────────────
     def _build_ui(self):
         root = self.root
 
-        # ── Заголовок ────────────────────────────────────────────────────────
-        hdr = tk.Frame(root, bg=C["bg"], pady=20)
+        # Заголовок
+        hdr = tk.Frame(root, bg=C["bg"], pady=16)
         hdr.pack(fill="x", padx=24)
-        tk.Label(hdr, text="FIST", font=("Courier New", 26, "bold"),
+        tk.Label(hdr, text="FIST", font=("Courier New", 24, "bold"),
                  fg=C["accent"], bg=C["bg"]).pack(side="left")
-        tk.Label(hdr, text=" CLICK", font=("Courier New", 26, "bold"),
+        tk.Label(hdr, text=" CLICK", font=("Courier New", 24, "bold"),
                  fg=C["text"], bg=C["bg"]).pack(side="left")
-        tk.Label(hdr, text="  УСТАНОВЩИК", font=("Courier New", 10),
-                 fg=C["text2"], bg=C["bg"]).pack(side="left", pady=(8, 0))
+        tk.Label(hdr, text="  УСТАНОВЩИК", font=("Courier New", 9),
+                 fg=C["text2"], bg=C["bg"]).pack(side="left", pady=(6, 0))
+        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 14))
 
-        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
-
-        # ── Папка установки ──────────────────────────────────────────────────
+        # Папка установки
         tk.Label(root, text="ПАПКА УСТАНОВКИ",
                  font=("Courier New", 8, "bold"), fg=C["text2"], bg=C["bg"]
                  ).pack(anchor="w", padx=24)
-
         path_row = tk.Frame(root, bg=C["bg"])
-        path_row.pack(fill="x", padx=24, pady=(6, 18))
-
+        path_row.pack(fill="x", padx=24, pady=(5, 12))
         self.path_var = tk.StringVar(
             value=os.path.join(os.path.expanduser("~"), "FIST-CLICK")
         )
@@ -162,32 +200,32 @@ class Installer:
                   padx=10, pady=5, cursor="hand2", command=self._browse,
                   ).pack(side="left")
 
-        # ── Опции ────────────────────────────────────────────────────────────
+        # Опции
         self.shortcut_var  = tk.BooleanVar(value=True)
         self.startmenu_var = tk.BooleanVar(value=True)
         opts = tk.Frame(root, bg=C["bg"])
-        opts.pack(fill="x", padx=24, pady=(0, 18))
+        opts.pack(fill="x", padx=24, pady=(0, 14))
         for var, text in [
             (self.shortcut_var,  "Создать ярлык на рабочем столе"),
             (self.startmenu_var, "Добавить в меню Пуск"),
         ]:
             row = tk.Frame(opts, bg=C["bg"])
-            row.pack(fill="x", pady=3)
+            row.pack(fill="x", pady=2)
             tk.Checkbutton(row, variable=var, text=text,
                            font=("Courier New", 9), fg=C["text"], bg=C["bg"],
                            selectcolor=C["bg"], activebackground=C["bg"],
                            relief="flat", bd=0, cursor="hand2",
                            ).pack(side="left")
 
-        # ── Шаги установки ───────────────────────────────────────────────────
-        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
+        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 14))
+
+        # Шаги
         tk.Label(root, text="ЭТАПЫ УСТАНОВКИ",
                  font=("Courier New", 8, "bold"), fg=C["text2"], bg=C["bg"]
                  ).pack(anchor="w", padx=24)
-
         self.step_labels = []
         steps_frame = tk.Frame(root, bg=C["bg"])
-        steps_frame.pack(fill="x", padx=24, pady=(8, 18))
+        steps_frame.pack(fill="x", padx=24, pady=(6, 12))
         for text in [
             "Проверка Python",
             "Скачивание FIST CLICK с GitHub",
@@ -205,30 +243,42 @@ class Installer:
             lbl.pack(side="left")
             self.step_labels.append((dot, lbl))
 
-        # ── Прогресс-бар ─────────────────────────────────────────────────────
-        # bg передаётся один раз — через kw, внутри ProgressBar извлекается pop()
+        # Прогресс-бар
         self.progress = ProgressBar(root, bg=C["bar_bg"])
-        self.progress.pack(fill="x", padx=24, pady=(0, 6))
-
+        self.progress.pack(fill="x", padx=24, pady=(0, 4))
         self.progress_lbl = tk.Label(root, text="Готов к установке",
                                      font=("Courier New", 8),
                                      fg=C["text2"], bg=C["bg"])
-        self.progress_lbl.pack(anchor="w", padx=24, pady=(0, 18))
+        self.progress_lbl.pack(anchor="w", padx=24, pady=(0, 10))
 
-        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
+        # ── ЛОГ (живой вывод) ────────────────────────────────────────────────
+        log_hdr = tk.Frame(root, bg=C["bg"])
+        log_hdr.pack(fill="x", padx=24, pady=(0, 4))
+        tk.Label(log_hdr, text="ЛОГ УСТАНОВКИ",
+                 font=("Courier New", 8, "bold"), fg=C["text2"], bg=C["bg"]
+                 ).pack(side="left")
+        # маленькая подсказка
+        self.log_hint = tk.Label(log_hdr, text="(здесь будет виден прогресс сборки)",
+                                  font=("Courier New", 7), fg=C["text3"], bg=C["bg"])
+        self.log_hint.pack(side="left", padx=(8, 0))
 
-        # ── Кнопка установки ─────────────────────────────────────────────────
+        self.logbox = LogBox(root)
+        self.logbox.pack(fill="x", padx=24, pady=(0, 12))
+
+        tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 14))
+
+        # Кнопка
         self.install_btn = tk.Button(
             root, text="\u25b6  УСТАНОВИТЬ",
             font=("Courier New", 13, "bold"),
             fg=C["bg"], bg=C["green"],
             activebackground="#25A244", activeforeground=C["bg"],
-            relief="flat", bd=0, pady=13,
+            relief="flat", bd=0, pady=12,
             cursor="hand2", command=self._start_install,
         )
         self.install_btn.pack(fill="x", padx=24, pady=(0, 20))
 
-    # ── Вспомогательные методы ───────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _browse(self):
         path = filedialog.askdirectory(title="Выберите папку установки")
@@ -246,72 +296,83 @@ class Installer:
         dot.config(text=cfg[0], fg=cfg[1])
         lbl.config(fg=cfg[2])
 
+    def _ui(self, fn):
+        """Запустить fn в UI-потоке."""
+        self.root.after(0, fn)
+
     def _log(self, msg, pct=None):
         def _do():
             self.progress_lbl.config(text=msg)
             if pct is not None:
                 self.progress.set(pct)
-        self.root.after(0, _do)
+        self._ui(_do)
 
     def _mark_step(self, index, state):
-        self.root.after(0, lambda: self._set_step(index, state))
+        self._ui(lambda: self._set_step(index, state))
 
-    # ── Установка ────────────────────────────────────────────────────────────
+    def _logline(self, line: str):
+        """Добавить строку в лог-бокс."""
+        self.logbox.append(line)
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _start_install(self):
         self.install_btn.config(state="disabled", text="Установка\u2026")
+        self.logbox.clear()
         threading.Thread(target=self._install, daemon=True).start()
 
     def _install(self):
-        install_dir = self.path_var.get().strip()
         try:
-            self._run_install(install_dir)
+            self._run_install(self.path_var.get().strip())
         except Exception as e:
-            self.root.after(0, lambda: self._on_error(str(e)))
+            self._ui(lambda: self._on_error(str(e)))
 
     def _run_install(self, install_dir):
         os.makedirs(install_dir, exist_ok=True)
         temp_dir = os.path.join(install_dir, "_tmp")
         os.makedirs(temp_dir, exist_ok=True)
 
-        # Шаг 0: Python
+        # ── Шаг 0: Python ────────────────────────────────────────────────────
         self._mark_step(0, "active")
         self._log("Поиск Python...", 0.02)
+        self._logline(">> Поиск Python в системе...")
         python = find_python()
         if python is None:
+            self._logline(">> Python не найден. Скачиваем...")
             self._log("Скачивание Python...", 0.05)
             py_exe = os.path.join(temp_dir, "python_setup.exe")
             urllib.request.urlretrieve(
                 "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe",
                 py_exe,
                 reporthook=lambda b, bs, ts: self._log(
-                    f"Скачивание Python: {min(b*bs, ts)//1024}/{ts//1024} КБ",
-                    0.05 + 0.1 * (b * bs / max(ts, 1))
+                    f"Python: {min(b*bs, ts)//1024}/{ts//1024} КБ", 0.05 + 0.1*(b*bs/max(ts,1))
                 )
             )
-            self._log("Установка Python...", 0.15)
+            self._logline(">> Запуск установщика Python...")
             subprocess.run(
                 [py_exe, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_pip=1"],
-                check=True, timeout=300
+                check=True, timeout=300,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             python = find_python()
             if python is None:
                 raise RuntimeError("Повторно запустите установщик после установки Python.")
+        self._logline(f">> Python найден: {python}")
         self._mark_step(0, "done")
         self._log("Python найден \u2713", 0.20)
 
-        # Шаг 1: Скачать исходники
+        # ── Шаг 1: Скачать исходники ─────────────────────────────────────────
         self._mark_step(1, "active")
-        self._log("Скачивание с GitHub...", 0.22)
+        self._logline(">> Скачивание исходников с GitHub...")
         zip_path = os.path.join(temp_dir, "src.zip")
         urllib.request.urlretrieve(
             GITHUB_ZIP, zip_path,
             reporthook=lambda b, bs, ts: self._log(
-                f"Скачивание: {min(b*bs, max(ts, 1))//1024} КБ",
-                0.22 + 0.14 * (b * bs / max(ts, 1))
+                f"GitHub: {min(b*bs, max(ts,1))//1024} КБ",
+                0.22 + 0.14*(b*bs/max(ts,1))
             )
         )
-        self._log("Распаковка...", 0.37)
+        self._logline(">> Распаковка архива...")
         with zipfile.ZipFile(zip_path) as z:
             z.extractall(temp_dir)
         extracted = next(
@@ -325,40 +386,93 @@ class Installer:
         if os.path.exists(src_dir):
             shutil.rmtree(src_dir)
         shutil.copytree(extracted, src_dir)
+        self._logline(f">> Исходники: {src_dir}")
         self._mark_step(1, "done")
         self._log("Исходники скачаны \u2713", 0.38)
 
-        # Шаг 2: Зависимости
+        # ── Шаг 2: Зависимости ───────────────────────────────────────────────
         self._mark_step(2, "active")
         for pkg, pct, msg in [
-            ("pip",         0.42, "pip..."),
-            ("pyautogui",   0.48, "pyautogui..."),
-            ("pynput",      0.54, "pynput..."),
-            ("pillow",      0.60, "pillow..."),
-            ("pyinstaller", 0.66, "pyinstaller..."),
+            ("pip",         0.42, "pip"),
+            ("pyautogui",   0.48, "pyautogui"),
+            ("pynput",      0.54, "pynput"),
+            ("pillow",      0.60, "pillow"),
+            ("pyinstaller", 0.66, "pyinstaller"),
         ]:
-            self._log(f"Установка {msg}", pct)
+            self._log(f"Установка {msg}...", pct)
+            self._logline(f">> pip install {msg}")
             args = ["--upgrade", pkg] if pkg == "pip" else [pkg]
-            pip_install(python, args, lambda m: None)
+            pip_install(python, args)
+            self._logline(f"   {msg} \u2713")
         self._mark_step(2, "done")
         self._log("Зависимости установлены \u2713", 0.68)
 
-        # Шаг 3: Сборка exe
+        # ── Шаг 3: Сборка EXE (с живым логом) ───────────────────────────────
         self._mark_step(3, "active")
-        self._log("Сборка FIST_CLICK.exe... (1-3 мин)", 0.70)
+        self._log("Сборка EXE... смотрите лог \u2193", 0.70)
+        self._logline("=" * 48)
+        self._logline(">> PyInstaller запущен. Это займёт 2-5 мин.")
+        self._logline("   Прогресс отображается ниже построчно.")
+        self._logline("=" * 48)
+
         spec = os.path.join(src_dir, "fist_click.spec")
-        py   = os.path.join(src_dir, "fist_click.py")
-        build_src = spec if os.path.exists(spec) else py
-        res = subprocess.run(
-            [python, "-m", "PyInstaller", "--noconfirm",
-             "--distpath", install_dir,
-             "--workpath", os.path.join(temp_dir, "build"),
-             "--specpath", temp_dir,
-             build_src],
-            capture_output=True, text=True, timeout=600, cwd=src_dir
+        py_src = os.path.join(src_dir, "fist_click.py")
+        build_src = spec if os.path.exists(spec) else py_src
+
+        cmd = [
+            python, "-m", "PyInstaller", "--noconfirm",
+            "--distpath", install_dir,
+            "--workpath", os.path.join(temp_dir, "build"),
+            "--specpath", temp_dir,
+            build_src,
+        ]
+
+        # Popen — читаем stdout/stderr построчно в реальном времени
+        CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,   # merge stderr → stdout
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=src_dir,
+            creationflags=CREATE_NO_WINDOW,
         )
-        if res.returncode != 0:
-            raise RuntimeError(f"PyInstaller ошибка:\n{res.stderr[-600:]}")
+
+        # Читаем пока процесс не закончится
+        pct_build = 0.70
+        phase_map = {
+            "Analysis":    (0.72, "Анализ зависимостей..."),
+            "Building":    (0.78, "Компиляция модулей..."),
+            "Collecting":  (0.82, "Сборка пакетов..."),
+            "EXE":         (0.88, "Финальная упаковка EXE..."),
+            "PKG":         (0.85, "Упаковка PKG..."),
+            "COLLECT":     (0.86, "Сбор файлов..."),
+        }
+        for raw_line in proc.stdout:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            self._logline(line)
+            # обновляем статус по ключевым словам PyInstaller
+            for keyword, (pct, msg) in phase_map.items():
+                if keyword in line and pct > pct_build:
+                    pct_build = pct
+                    self._log(msg, pct_build)
+                    break
+
+        proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "PyInstaller завершился с ошибкой.\n"
+                "Смотрите лог выше для деталей."
+            )
+
+        self._logline("=" * 48)
+        self._logline(">> Сборка завершена успешно \u2713")
+        self._logline("=" * 48)
+
         exe_name = "FIST_CLICK.exe"
         exe_path = os.path.join(install_dir, exe_name)
         if not os.path.exists(exe_path):
@@ -369,17 +483,20 @@ class Installer:
                         break
         if not os.path.exists(exe_path):
             raise RuntimeError("FIST_CLICK.exe не найден после сборки.")
+
         self._mark_step(3, "done")
         self._log("EXE собран \u2713", 0.88)
 
-        # Шаг 4: Ярлыки
+        # ── Шаг 4: Ярлыки ────────────────────────────────────────────────────
         self._mark_step(4, "active")
         self._log("Создание ярлыков...", 0.91)
+        self._logline(">> Создание ярлыков...")
         try:
             try:
                 import winshell
             except ImportError:
-                pip_install(python, ["winshell", "pywin32"], lambda m: None)
+                self._logline(">> pip install winshell pywin32")
+                pip_install(python, ["winshell", "pywin32"])
                 import winshell
             from win32com.client import Dispatch
             shell = Dispatch("WScript.Shell")
@@ -390,6 +507,7 @@ class Installer:
                 sc.WorkingDirectory = install_dir
                 sc.Description = "FIST CLICK Auto Clicker"
                 sc.save()
+                self._logline(f"   Ярлык на рабочем столе \u2713")
             if self.startmenu_var.get():
                 sm = os.path.join(
                     os.environ.get("APPDATA", ""),
@@ -401,15 +519,18 @@ class Installer:
                 sc.Targetpath = exe_path
                 sc.WorkingDirectory = install_dir
                 sc.save()
-        except Exception:
-            pass  # ярлыки опциональны
+                self._logline(f"   Меню Пуск \u2713")
+        except Exception as e:
+            self._logline(f"   Ярлыки: {e} (пропущено)")
+
         self._mark_step(4, "done")
-        self._log("Ярлыки созданы \u2713", 1.0)
+        self._log("Установка завершена!", 1.0)
+        self._logline(">> Всё готово!")
 
         shutil.rmtree(temp_dir, ignore_errors=True)
-        self.root.after(0, lambda: self._on_done(exe_path))
+        self._ui(lambda: self._on_done(exe_path))
 
-    # ── Финал ────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _on_done(self, exe_path):
         self.install_btn.config(
@@ -423,7 +544,7 @@ class Installer:
         )
         messagebox.showinfo(
             "FIST CLICK установлен",
-            f"Установка завершена!\n\nFIST_CLICK.exe находится в:\n{os.path.dirname(exe_path)}"
+            f"Установка завершена!\n\nFIST_CLICK.exe:\n{exe_path}"
         )
 
     def _on_error(self, msg):
