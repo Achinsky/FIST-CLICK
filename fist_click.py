@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-FIST CLICK v2.0.1
-Auto Clicker — Multi-spot, Script mode, Follow-mouse, Settings, i18n
+FIST CLICK v2.0.2
+Auto Clicker — Multi-spot, Script mode, Follow-mouse, Macro Recorder, Settings, i18n
 """
 
 import tkinter as tk
@@ -21,7 +21,7 @@ except Exception:
     PYAUTOGUI_OK = False
 
 try:
-    from pynput import keyboard as pynkeyboard
+    from pynput import keyboard as pynkeyboard, mouse as pynmouse
     PYNPUT_OK = True
 except Exception:
     PYNPUT_OK = False
@@ -40,6 +40,7 @@ STR = {
         "tab_spots": "СПОТЫ",
         "tab_follow": "ПО МЫШИ",
         "tab_script": "СКРИПТ",
+        "tab_record": "ЗАПИСЬ",
         "tab_settings": "НАСТРОЙКИ",
         "spots_label": "ТОЧКИ КЛИКОВ",
         "spot": "СПОТ",
@@ -80,6 +81,30 @@ STR = {
         "sc_col_btn": "Кнопка",
         "sc_col_type": "Тип",
         "sc_col_delay": "Задержка мс",
+        # --- Record tab ---
+        "rec_title": "ЗАПИСЬ ДЕЙСТВИЙ",
+        "rec_desc": "Нажмите F6 чтобы начать запись всех действий (мышь, клавиатура, скролл). Нажмите F6 снова для остановки.",
+        "rec_start": "⏺  НАЧАТЬ ЗАПИСЬ",
+        "rec_stop_rec": "⏹  ОСТАНОВИТЬ ЗАПИСЬ",
+        "rec_play": "▶  ВОСПРОИЗВЕСТИ",
+        "rec_stop_play": "■  СТОП",
+        "rec_clear": "🗑  ОЧИСТИТЬ",
+        "rec_events": "ЗАПИСАННЫЕ СОБЫТИЯ",
+        "rec_col_n": "#",
+        "rec_col_type": "Тип",
+        "rec_col_detail": "Детали",
+        "rec_col_delay": "Задержка мс",
+        "rec_repeat_mode": "РЕЖИМ ПОВТОРА",
+        "rec_repeat_inf": "БЕСКОНЕЧНО",
+        "rec_repeat_count": "КОЛ-ВО РАЗ",
+        "rec_repeat_timer": "ТАЙМЕР (сек)",
+        "rec_repeats": "Повторений:",
+        "rec_timer_sec": "Секунд:",
+        "rec_recording": "● ЗАПИСЬ...",
+        "rec_playing": "▶ ВОСПРОИЗВЕДЕНИЕ...",
+        "rec_no_events": "Нет записанных событий!",
+        "rec_events_count": "событий",
+        # ---
         "set_lang": "ЯЗЫК",
         "set_topmost": "Поверх всех окон",
         "set_hotkey_start": "Горячая кл. СТАРТ/СТОП",
@@ -102,6 +127,7 @@ STR = {
         "tab_spots": "SPOTS",
         "tab_follow": "FOLLOW",
         "tab_script": "SCRIPT",
+        "tab_record": "RECORD",
         "tab_settings": "SETTINGS",
         "spots_label": "CLICK SPOTS",
         "spot": "SPOT",
@@ -142,6 +168,30 @@ STR = {
         "sc_col_btn": "Button",
         "sc_col_type": "Type",
         "sc_col_delay": "Delay ms",
+        # --- Record tab ---
+        "rec_title": "ACTION RECORDER",
+        "rec_desc": "Press F6 to start recording all actions (mouse, keyboard, scroll). Press F6 again to stop.",
+        "rec_start": "⏺  START RECORDING",
+        "rec_stop_rec": "⏹  STOP RECORDING",
+        "rec_play": "▶  PLAY",
+        "rec_stop_play": "■  STOP",
+        "rec_clear": "🗑  CLEAR",
+        "rec_events": "RECORDED EVENTS",
+        "rec_col_n": "#",
+        "rec_col_type": "Type",
+        "rec_col_detail": "Details",
+        "rec_col_delay": "Delay ms",
+        "rec_repeat_mode": "REPEAT MODE",
+        "rec_repeat_inf": "INFINITE",
+        "rec_repeat_count": "COUNT",
+        "rec_repeat_timer": "TIMER (sec)",
+        "rec_repeats": "Repeats:",
+        "rec_timer_sec": "Seconds:",
+        "rec_recording": "● RECORDING...",
+        "rec_playing": "▶ PLAYING...",
+        "rec_no_events": "No recorded events!",
+        "rec_events_count": "events",
+        # ---
         "set_lang": "LANGUAGE",
         "set_topmost": "Always on top",
         "set_hotkey_start": "Hotkey START/STOP",
@@ -219,6 +269,14 @@ class ScriptStep:
         self.delay_ms = delay_ms
 
 
+# MacroEvent types: "click", "key_press", "key_release", "scroll", "move"
+class MacroEvent:
+    def __init__(self, kind, detail, delay_ms=0):
+        self.kind = kind        # str
+        self.detail = detail    # dict
+        self.delay_ms = delay_ms
+
+
 # ── Pick overlay ──────────────────────────────────────────────────────────────
 class PickOverlay:
     def __init__(self, root, callback, hint=""):
@@ -259,13 +317,23 @@ class FistClick:
         self.hotkey_listener = None
         self._mode = "spots"
 
+        # Macro recorder state
+        self._macro_events = []       # list[MacroEvent]
+        self._macro_recording = False
+        self._macro_playing = False
+        self._macro_play_thread = None
+        self._macro_kb_listener = None
+        self._macro_ms_listener = None
+        self._macro_last_time = None  # for timing between events
+
         # ── ВАЖНО: tk.Tk() ПЕРВЫМ, StringVar — только после него ─────────────
         self.root = tk.Tk()
 
         # Только здесь создаём StringVar — после Tk()
-        self._follow_btn  = tk.StringVar(value="left")
-        self._follow_type = tk.StringVar(value="single")
-        self._time_mode   = tk.StringVar(value="infinite")
+        self._follow_btn    = tk.StringVar(value="left")
+        self._follow_type   = tk.StringVar(value="single")
+        self._time_mode     = tk.StringVar(value="infinite")
+        self._rec_rep_mode  = tk.StringVar(value="infinite")
 
         self.root.configure(bg=self.C("bg"))
         self.root.title(self.t("title"))
@@ -344,7 +412,7 @@ class FistClick:
                  font=self._font(22, True), fg=self.C("accent"), bg=bg).pack(side="left")
         tk.Label(title_bar, text=" CLICK",
                  font=self._font(22, True), fg=self.C("text"), bg=bg).pack(side="left")
-        tk.Label(title_bar, text="  v2.0",
+        tk.Label(title_bar, text="  v2.0.2",
                  font=self._font(8), fg=self.C("text3"), bg=bg).pack(side="left", pady=(8, 0))
 
         self._status_dot = tk.Label(title_bar, text="\u25cf",
@@ -361,11 +429,16 @@ class FistClick:
         tab_bar.pack(fill="x", padx=20, pady=(0, 10))
         self._tab_btns = {}
         self._tabs = {}
-        for key, lbl_key in [("spots", "tab_spots"), ("follow", "tab_follow"),
-                              ("script", "tab_script"), ("settings", "tab_settings")]:
+        for key, lbl_key in [
+            ("spots",    "tab_spots"),
+            ("follow",   "tab_follow"),
+            ("script",   "tab_script"),
+            ("record",   "tab_record"),
+            ("settings", "tab_settings"),
+        ]:
             b = tk.Button(tab_bar, text=self.t(lbl_key),
                           font=self._font(8, True),
-                          relief="flat", bd=0, padx=12, pady=6,
+                          relief="flat", bd=0, padx=10, pady=6,
                           cursor="hand2",
                           command=lambda k=key: self._show_tab(k))
             b.pack(side="left", padx=(0, 2))
@@ -378,6 +451,7 @@ class FistClick:
         self._build_spots_tab()
         self._build_follow_tab()
         self._build_script_tab()
+        self._build_record_tab()
         self._build_settings_tab()
         self._show_tab("spots")
 
@@ -679,6 +753,450 @@ class FistClick:
             self._sc_refresh()
             self._sc_tree.selection_set(self._sc_tree.get_children()[i+1])
 
+    # ── RECORD TAB ────────────────────────────────────────────────────────────
+    def _build_record_tab(self):
+        bg  = self.C("bg")
+        card_bg = self.C("card")
+        f = tk.Frame(self._content, bg=bg)
+        self._tabs["record"] = f
+
+        # Title + description
+        tk.Label(f, text=self.t("rec_title"),
+                 font=self._font(10, True), fg=self.C("accent"), bg=bg
+                 ).pack(anchor="w", padx=20, pady=(10, 2))
+        tk.Label(f, text=self.t("rec_desc"),
+                 font=self._font(8), fg=self.C("text2"), bg=bg,
+                 wraplength=440, justify="left"
+                 ).pack(anchor="w", padx=20, pady=(0, 8))
+
+        # Control buttons row
+        btns = tk.Frame(f, bg=bg)
+        btns.pack(fill="x", padx=20, pady=(0, 8))
+
+        self._rec_start_btn = tk.Button(
+            btns, text=self.t("rec_start"),
+            font=self._font(8, True),
+            fg=self.C("bg"), bg=self.C("accent"),
+            activebackground="#CC2D24", activeforeground=self.C("bg"),
+            relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            command=self._rec_start_recording
+        )
+        self._rec_start_btn.pack(side="left", padx=(0, 4))
+
+        self._rec_stop_rec_btn = tk.Button(
+            btns, text=self.t("rec_stop_rec"),
+            font=self._font(8, True),
+            fg=self.C("text"), bg=self.C("card"),
+            activebackground=self.C("border"),
+            relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            state="disabled",
+            command=self._rec_stop_recording
+        )
+        self._rec_stop_rec_btn.pack(side="left", padx=(0, 4))
+
+        self._rec_play_btn = tk.Button(
+            btns, text=self.t("rec_play"),
+            font=self._font(8, True),
+            fg=self.C("bg"), bg=self.C("green"),
+            activebackground="#25A244", activeforeground=self.C("bg"),
+            relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            command=self._rec_play
+        )
+        self._rec_play_btn.pack(side="left", padx=(0, 4))
+
+        self._rec_stop_play_btn = tk.Button(
+            btns, text=self.t("rec_stop_play"),
+            font=self._font(8, True),
+            fg=self.C("text"), bg=self.C("card"),
+            activebackground=self.C("border"),
+            relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            state="disabled",
+            command=self._rec_stop_play
+        )
+        self._rec_stop_play_btn.pack(side="left", padx=(0, 4))
+
+        tk.Button(
+            btns, text=self.t("rec_clear"),
+            font=self._font(8, True),
+            fg=self.C("text2"), bg=self.C("card"),
+            activebackground=self.C("border"),
+            relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            command=self._rec_clear
+        ).pack(side="left", padx=(0, 4))
+
+        # Status label for recording/playing
+        self._rec_status_lbl = tk.Label(
+            btns, text="",
+            font=self._font(8, True), fg=self.C("accent"), bg=bg
+        )
+        self._rec_status_lbl.pack(side="right", padx=(8, 0))
+
+        # Events count label
+        self._rec_count_lbl = tk.Label(
+            f, text=f"0 {self.t('rec_events_count')}",
+            font=self._font(7), fg=self.C("text3"), bg=bg
+        )
+        self._rec_count_lbl.pack(anchor="w", padx=20, pady=(0, 4))
+
+        # Treeview for events
+        tbl_frame = tk.Frame(f, bg=card_bg,
+                             highlightbackground=self.C("border"), highlightthickness=1)
+        tbl_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+
+        rec_cols     = ("n", "type", "detail", "delay")
+        rec_col_keys = ("rec_col_n", "rec_col_type", "rec_col_detail", "rec_col_delay")
+        rec_col_w    = (30, 90, 220, 80)
+
+        style = ttk.Style()
+        style.configure("Record.Treeview",
+                        background=card_bg,
+                        foreground=self.C("text"),
+                        fieldbackground=card_bg,
+                        rowheight=22,
+                        font=self._font())
+        style.configure("Record.Treeview.Heading",
+                        background=self.C("border"),
+                        foreground=self.C("text2"),
+                        font=self._font(bold=True))
+        style.map("Record.Treeview",
+                  background=[("selected", self.C("accent"))],
+                  foreground=[("selected", "white")])
+
+        self._rec_tree = ttk.Treeview(tbl_frame, columns=rec_cols, show="headings",
+                                      height=7, style="Record.Treeview")
+        for c, k, w in zip(rec_cols, rec_col_keys, rec_col_w):
+            self._rec_tree.heading(c, text=self.t(k))
+            self._rec_tree.column(c, width=w, anchor="center" if w < 100 else "w")
+
+        rec_sb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self._rec_tree.yview)
+        self._rec_tree.configure(yscrollcommand=rec_sb.set)
+        rec_sb.pack(side="right", fill="y")
+        self._rec_tree.pack(fill="both", expand=True)
+
+        # ── Repeat mode ──────────────────────────────────────────────────────
+        self._sep(f)
+        rep_hdr = tk.Frame(f, bg=bg)
+        rep_hdr.pack(fill="x", padx=20, pady=(0, 6))
+        tk.Label(rep_hdr, text=self.t("rec_repeat_mode"),
+                 font=self._font(8, True), fg=self.C("text2"), bg=bg
+                 ).pack(side="left")
+
+        rep_row = tk.Frame(f, bg=bg)
+        rep_row.pack(fill="x", padx=20, pady=(0, 4))
+
+        for val, key in [
+            ("infinite", "rec_repeat_inf"),
+            ("count",    "rec_repeat_count"),
+            ("timer",    "rec_repeat_timer"),
+        ]:
+            tk.Radiobutton(
+                rep_row, text=self.t(key),
+                variable=self._rec_rep_mode, value=val,
+                font=self._font(bold=True),
+                fg=self.C("text"), bg=bg, selectcolor=bg,
+                activebackground=bg, relief="flat", bd=0,
+                cursor="hand2", indicatoron=0, padx=8, pady=3,
+                command=self._rec_update_rep_widgets
+            ).pack(side="left", padx=(0, 4))
+
+        rep_params = tk.Frame(f, bg=bg)
+        rep_params.pack(fill="x", padx=20, pady=(2, 10))
+
+        # count widget
+        self._rec_rep_count_frame = tk.Frame(rep_params, bg=bg)
+        tk.Label(self._rec_rep_count_frame, text=self.t("rec_repeats"),
+                 font=self._font(8), fg=self.C("text2"), bg=bg).pack(side="left", padx=(0, 6))
+        self._rec_rep_count_var = tk.StringVar(value="5")
+        tk.Spinbox(self._rec_rep_count_frame, from_=1, to=9999,
+                   textvariable=self._rec_rep_count_var,
+                   width=6, font=self._font(),
+                   fg=self.C("text"), bg=self.C("card"),
+                   insertbackground=self.C("text"),
+                   relief="flat", bd=1,
+                   highlightbackground=self.C("border"), highlightthickness=1
+                   ).pack(side="left")
+
+        # timer widget
+        self._rec_rep_timer_frame = tk.Frame(rep_params, bg=bg)
+        tk.Label(self._rec_rep_timer_frame, text=self.t("rec_timer_sec"),
+                 font=self._font(8), fg=self.C("text2"), bg=bg).pack(side="left", padx=(0, 6))
+        self._rec_rep_timer_var = tk.StringVar(value="30")
+        tk.Spinbox(self._rec_rep_timer_frame, from_=1, to=86400,
+                   textvariable=self._rec_rep_timer_var,
+                   width=7, font=self._font(),
+                   fg=self.C("text"), bg=self.C("card"),
+                   insertbackground=self.C("text"),
+                   relief="flat", bd=1,
+                   highlightbackground=self.C("border"), highlightthickness=1
+                   ).pack(side="left")
+
+        self._rec_update_rep_widgets()
+
+    def _rec_update_rep_widgets(self):
+        self._rec_rep_count_frame.pack_forget()
+        self._rec_rep_timer_frame.pack_forget()
+        mode = self._rec_rep_mode.get()
+        if mode == "count":
+            self._rec_rep_count_frame.pack(side="left")
+        elif mode == "timer":
+            self._rec_rep_timer_frame.pack(side="left")
+
+    def _rec_refresh_tree(self):
+        self._rec_tree.delete(*self._rec_tree.get_children())
+        for i, ev in enumerate(self._macro_events):
+            detail = self._ev_detail_str(ev)
+            self._rec_tree.insert("", "end", values=(i+1, ev.kind, detail, ev.delay_ms))
+        self._rec_count_lbl.config(
+            text=f"{len(self._macro_events)} {self.t('rec_events_count')}"
+        )
+        # Auto scroll to bottom
+        if self._rec_tree.get_children():
+            self._rec_tree.see(self._rec_tree.get_children()[-1])
+
+    @staticmethod
+    def _ev_detail_str(ev):
+        d = ev.detail
+        k = ev.kind
+        if k == "click":
+            return f"{d.get('button','?')} ({d.get('x',0)},{d.get('y',0)}) {'press' if d.get('pressed') else 'release'}"
+        elif k == "key_press":
+            return f"press: {d.get('key','?')}"
+        elif k == "key_release":
+            return f"release: {d.get('key','?')}"
+        elif k == "scroll":
+            return f"scroll ({d.get('x',0)},{d.get('y',0)}) dx={d.get('dx',0)} dy={d.get('dy',0)}"
+        elif k == "move":
+            return f"move ({d.get('x',0)},{d.get('y',0)})"
+        return str(d)
+
+    # ── Recording logic ───────────────────────────────────────────────────────
+    def _rec_start_recording(self):
+        if not PYNPUT_OK:
+            self._flash(self.t("no_pyautogui"))
+            return
+        if self._macro_recording:
+            return
+        self._macro_events.clear()
+        self._macro_last_time = time.time()
+        self._macro_recording = True
+
+        self._rec_start_btn.config(state="disabled")
+        self._rec_stop_rec_btn.config(state="normal")
+        self._rec_play_btn.config(state="disabled")
+        self._rec_status_lbl.config(text=self.t("rec_recording"), fg=self.C("accent"))
+        self._rec_refresh_tree()
+
+        # Start pynput listeners
+        self._macro_kb_listener = pynkeyboard.Listener(
+            on_press=self._rec_on_key_press,
+            on_release=self._rec_on_key_release
+        )
+        self._macro_ms_listener = pynmouse.Listener(
+            on_click=self._rec_on_click,
+            on_scroll=self._rec_on_scroll
+            # on_move excluded intentionally to avoid event flood
+        )
+        self._macro_kb_listener.daemon = True
+        self._macro_ms_listener.daemon = True
+        self._macro_kb_listener.start()
+        self._macro_ms_listener.start()
+
+    def _rec_stop_recording(self):
+        self._macro_recording = False
+        if self._macro_kb_listener:
+            try:
+                self._macro_kb_listener.stop()
+            except Exception:
+                pass
+            self._macro_kb_listener = None
+        if self._macro_ms_listener:
+            try:
+                self._macro_ms_listener.stop()
+            except Exception:
+                pass
+            self._macro_ms_listener = None
+
+        self._rec_start_btn.config(state="normal")
+        self._rec_stop_rec_btn.config(state="disabled")
+        self._rec_play_btn.config(state="normal")
+        self._rec_status_lbl.config(text="")
+        self.root.after(0, self._rec_refresh_tree)
+
+    def _rec_record_event(self, kind, detail):
+        if not self._macro_recording:
+            return
+        now = time.time()
+        delay_ms = int((now - self._macro_last_time) * 1000)
+        self._macro_last_time = now
+        ev = MacroEvent(kind, detail, delay_ms)
+        self._macro_events.append(ev)
+        # Update UI from main thread every 5 events
+        if len(self._macro_events) % 5 == 0:
+            self.root.after(0, self._rec_refresh_tree)
+
+    def _rec_on_key_press(self, key):
+        # Skip F6 to avoid recording the hotkey itself
+        try:
+            name = key.name if hasattr(key, "name") else str(key)
+        except Exception:
+            name = str(key)
+        if name and name.lower() == self.hotkey:
+            return
+        self._rec_record_event("key_press", {"key": name})
+
+    def _rec_on_key_release(self, key):
+        try:
+            name = key.name if hasattr(key, "name") else str(key)
+        except Exception:
+            name = str(key)
+        if name and name.lower() == self.hotkey:
+            return
+        self._rec_record_event("key_release", {"key": name})
+
+    def _rec_on_click(self, x, y, button, pressed):
+        btn_name = button.name if hasattr(button, "name") else str(button)
+        self._rec_record_event("click", {"x": x, "y": y, "button": btn_name, "pressed": pressed})
+
+    def _rec_on_scroll(self, x, y, dx, dy):
+        self._rec_record_event("scroll", {"x": x, "y": y, "dx": dx, "dy": dy})
+
+    # ── Playback logic ────────────────────────────────────────────────────────
+    def _rec_play(self):
+        if not PYAUTOGUI_OK or not PYNPUT_OK:
+            self._flash(self.t("no_pyautogui"))
+            return
+        if not self._macro_events:
+            self._flash(self.t("rec_no_events"))
+            return
+        if self._macro_playing or self._macro_recording:
+            return
+
+        self._macro_playing = True
+        self._rec_play_btn.config(state="disabled")
+        self._rec_stop_play_btn.config(state="normal")
+        self._rec_start_btn.config(state="disabled")
+        self._rec_status_lbl.config(text=self.t("rec_playing"), fg=self.C("green"))
+
+        self._macro_play_thread = threading.Thread(
+            target=self._rec_play_loop, daemon=True
+        )
+        self._macro_play_thread.start()
+
+    def _rec_stop_play(self):
+        self._macro_playing = False
+
+    def _rec_play_loop(self):
+        mode = self._rec_rep_mode.get()
+        try:
+            count = int(self._rec_rep_count_var.get())
+        except Exception:
+            count = 1
+        try:
+            timer_sec = float(self._rec_rep_timer_var.get())
+        except Exception:
+            timer_sec = 30.0
+
+        end_time = (time.time() + timer_sec) if mode == "timer" else None
+        iteration = 0
+
+        # Use pynput controller for keyboard
+        kb_ctrl = pynkeyboard.Controller()
+        ms_ctrl = pynmouse.Controller()
+
+        while self._macro_playing:
+            if mode == "timer" and time.time() >= end_time:
+                break
+            if mode == "count" and iteration >= count:
+                break
+
+            for ev in self._macro_events:
+                if not self._macro_playing:
+                    break
+                # Respect original timing
+                delay_s = ev.delay_ms / 1000.0
+                if delay_s > 0:
+                    slept = 0.0
+                    step = 0.02
+                    while slept < delay_s and self._macro_playing:
+                        time.sleep(min(step, delay_s - slept))
+                        slept += step
+                if not self._macro_playing:
+                    break
+                try:
+                    self._rec_play_event(ev, kb_ctrl, ms_ctrl)
+                except Exception:
+                    pass
+
+            iteration += 1
+
+        self.root.after(0, self._rec_play_done)
+
+    def _rec_play_event(self, ev, kb_ctrl, ms_ctrl):
+        d = ev.detail
+        if ev.kind == "click":
+            x, y = d.get("x", 0), d.get("y", 0)
+            btn_name = d.get("button", "left")
+            pressed  = d.get("pressed", True)
+            # Map name to pynput button
+            btn_map = {
+                "left":   pynmouse.Button.left,
+                "right":  pynmouse.Button.right,
+                "middle": pynmouse.Button.middle,
+            }
+            btn = btn_map.get(btn_name, pynmouse.Button.left)
+            ms_ctrl.position = (x, y)
+            if pressed:
+                ms_ctrl.press(btn)
+            else:
+                ms_ctrl.release(btn)
+
+        elif ev.kind == "scroll":
+            x, y   = d.get("x", 0), d.get("y", 0)
+            dx, dy = d.get("dx", 0), d.get("dy", 0)
+            ms_ctrl.position = (x, y)
+            ms_ctrl.scroll(dx, dy)
+
+        elif ev.kind == "key_press":
+            key_name = d.get("key", "")
+            self._kb_press(kb_ctrl, key_name)
+
+        elif ev.kind == "key_release":
+            key_name = d.get("key", "")
+            self._kb_release(kb_ctrl, key_name)
+
+    @staticmethod
+    def _kb_press(ctrl, key_name):
+        try:
+            special = getattr(pynkeyboard.Key, key_name, None)
+            if special:
+                ctrl.press(special)
+            else:
+                ctrl.press(key_name)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _kb_release(ctrl, key_name):
+        try:
+            special = getattr(pynkeyboard.Key, key_name, None)
+            if special:
+                ctrl.release(special)
+            else:
+                ctrl.release(key_name)
+        except Exception:
+            pass
+
+    def _rec_play_done(self):
+        self._macro_playing = False
+        self._rec_play_btn.config(state="normal")
+        self._rec_stop_play_btn.config(state="disabled")
+        self._rec_start_btn.config(state="normal")
+        self._rec_status_lbl.config(text="")
+
+    def _rec_clear(self):
+        self._macro_events.clear()
+        self._rec_refresh_tree()
+
     # ── SETTINGS TAB ─────────────────────────────────────────────────────────
     def _build_settings_tab(self):
         bg = self.C("bg")
@@ -937,8 +1455,15 @@ class FistClick:
         self.hotkey_listener.daemon = True
         self.hotkey_listener.start()
 
-    # ── Start / Stop ──────────────────────────────────────────────────────────
+    # ── Start / Stop (clicker) ────────────────────────────────────────────────
     def _toggle(self):
+        # If record tab is active — toggle recording instead
+        if self._mode == "record":
+            if self._macro_recording:
+                self._rec_stop_recording()
+            elif not self._macro_playing:
+                self._rec_start_recording()
+            return
         if self.running:
             self._stop()
         else:
@@ -957,6 +1482,9 @@ class FistClick:
             if not self.script_steps:
                 self._flash(self.t("no_spots"))
                 return
+        elif self._mode == "record":
+            # Handled via _toggle
+            return
         self.running = True
         self._click_count = 0
         self._set_ui_running(True)
@@ -1093,11 +1621,14 @@ class FistClick:
     # ── Close ─────────────────────────────────────────────────────────────────
     def _quit(self):
         self.running = False
-        if self.hotkey_listener:
-            try:
-                self.hotkey_listener.stop()
-            except Exception:
-                pass
+        self._macro_playing = False
+        self._macro_recording = False
+        for listener in [self.hotkey_listener, self._macro_kb_listener, self._macro_ms_listener]:
+            if listener:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
         self.root.destroy()
 
 
