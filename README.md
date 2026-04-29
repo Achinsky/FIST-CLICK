@@ -1,72 +1,90 @@
 # 👊 FIST CLICK
 
-> Lightweight auto clicker with multi-spot support, coordinate picker, hotkey toggle, and dark UI.
+> Лёгкий автокликер с поддержкой нескольких точек, выбором координат, горячей клавишей и тёмным интерфейсом.
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python)
-![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+![Platform](https://img.shields.io/badge/Платформа-Windows-lightgrey?style=flat-square)
+![License](https://img.shields.io/badge/Лицензия-MIT-green?style=flat-square)
+![Version](https://img.shields.io/badge/Версия-1.0.0-red?style=flat-square)
 
 ---
 
-## Features
+## ⬇️ Скачать
 
-| Feature | Details |
+Перейдите в раздел **[Releases](https://github.com/Achinsky/FIST-CLICK/releases)** и скачайте последний `Source code (zip)`.
+
+Или клонируйте репозиторий:
+```bash
+git clone https://github.com/Achinsky/FIST-CLICK.git
+```
+
+---
+
+## ✨ Возможности
+
+| Функция | Описание |
 |---|---|
-| **Up to 4 click spots** | Each spot independently toggled ON/OFF |
-| **Coordinate picker** | Fullscreen crosshair overlay — click to capture X/Y |
-| **Mouse button** | LEFT or RIGHT per spot |
-| **Click type** | Single (×1) or Double (×2) per spot |
-| **Interval** | h : m : s : ms |
-| **Duration mode** | INFINITE (until STOP) or TIMER (auto-stop) |
-| **Hotkey** | Default F6, reassignable via SET button |
-| **Always on top** | Window stays above all other apps |
-| **Click counter** | Live count displayed in UI |
+| **До 4 точек кликов** | Каждая точка включается/выключается отдельно |
+| **Выбор координат** | Полноэкранный прицел — кликните в нужное место |
+| **Кнопка мыши** | ЛЕВАЯ или ПРАВАЯ для каждой точки |
+| **Тип клика** | Одиночный (×1) или Двойной (×2) для каждой точки |
+| **Интервал** | ч : м : с : мс |
+| **Режим длительности** | БЕСКОНЕЧНО (до нажатия СТОП) или ТАЙМЕР (авто-стоп) |
+| **Горячая клавиша** | По умолчанию F6, можно переназначить кнопкой SET |
+| **Поверх всех окон** | Окно всегда отображается поверх других приложений |
+| **Счётчик кликов** | Живое отображение количества кликов |
 
 ---
 
-## Quick Start
+## 🚀 Быстрый старт
 
-### Run from source
+### Запуск из исходников
 
 ```bash
 pip install pyautogui pynput pillow
 python fist_click.py
 ```
 
-### Build .exe (Windows)
+### Сборка .exe (Windows)
 
 ```bash
 pip install pyinstaller pyautogui pynput pillow
 pyinstaller fist_click.spec
 ```
 
-The ready `FIST_CLICK.exe` will appear in the `dist/` folder.
+Готовый `FIST_CLICK.exe` появится в папке `dist/`.
 
 ---
 
-## Usage
+## 📖 Использование
 
-1. Click **⊕ PICK** on any spot card, then click anywhere on your screen to set coordinates
-2. Choose **LEFT / RIGHT** mouse button and **×1 / ×2** click type per spot
-3. Set the **INTERVAL** between click cycles
-4. Choose **INFINITE** or **TIMER** mode
-5. Press **▶ START** or press **F6** to begin clicking
-6. Press **■ STOP** or press **F6** again to stop
-
----
-
-## Notes
-
-- If the global hotkey (F6) doesn't respond, try running as **Administrator**
-- To run as admin by default in the .exe, set `uac_admin=True` in `fist_click.spec` before building
-- Minimum interval is clamped to 50ms to prevent runaway loops
+1. Нажмите **⊕ PICK** на карточке спота, затем кликните в нужное место экрана
+2. Выберите **ЛЕВУЮ / ПРАВУЮ** кнопку мыши и тип клика **×1 / ×2**
+3. Установите **ИНТЕРВАЛ** между циклами кликов (ч : м : с : мс)
+4. Выберите режим **БЕСКОНЕЧНО** или **ТАЙМЕР**
+5. Нажмите **▶ СТАРТ** или клавишу **F6** для начала кликов
+6. Нажмите **■ СТОП** или снова **F6** для остановки
 
 ---
 
-## Requirements
+## ⚠️ Примечания
+
+- Если глобальная горячая клавиша (F6) не работает — запустите программу от **Администратора**
+- Для запуска .exe от администратора по умолчанию: установите `uac_admin=True` в `fist_click.spec` перед сборкой
+- Минимальный интервал ограничен 50мс для предотвращения зависания
+
+---
+
+## 📋 Требования
 
 - Python 3.8+
 - `pyautogui`
 - `pynput`
 - `pillow`
-- `tkinter` (included with Python on Windows)
+- `tkinter` (входит в стандартную поставку Python на Windows)
+
+---
+
+## 📦 История версий
+
+Смотрите [CHANGELOG.md](CHANGELOG.md) или раздел [Releases](https://github.com/Achinsky/FIST-CLICK/releases).
