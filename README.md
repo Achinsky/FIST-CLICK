@@ -6,17 +6,19 @@
 ![Platform](https://img.shields.io/badge/Платформа-Windows-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/Лицензия-MIT-green?style=flat-square)
 ![Version](https://img.shields.io/badge/Версия-1.0.0-red?style=flat-square)
+![Build](https://img.shields.io/github/actions/workflow/status/Achinsky/FIST-CLICK/build-installer.yml?style=flat-square&label=Installer+Build)
 
 ---
 
-## ⬇️ Скачать
+## ⬇️ Установка — одним нажатием
 
-Перейдите в раздел **[Releases](https://github.com/Achinsky/FIST-CLICK/releases)** и скачайте последний `Source code (zip)`.
+1. Перейдите в **[Releases](https://github.com/Achinsky/FIST-CLICK/releases)**
+2. Скачайте `FIST_CLICK_Setup_vX.X.X.exe`
+3. Запустите → выберите папку → нажмите **УСТАНОВИТЬ**
+4. Готово — `FIST_CLICK.exe` появится сам, ярлык создастся на рабочем столе
 
-Или клонируйте репозиторий:
-```bash
-git clone https://github.com/Achinsky/FIST-CLICK.git
-```
+> **Установщик автоматически:**  
+> устанавливает Python (если не установлен) → скачивает исходники → устанавливает зависимости → собирает EXE → создаёт ярлыки
 
 ---
 
@@ -36,26 +38,6 @@ git clone https://github.com/Achinsky/FIST-CLICK.git
 
 ---
 
-## 🚀 Быстрый старт
-
-### Запуск из исходников
-
-```bash
-pip install pyautogui pynput pillow
-python fist_click.py
-```
-
-### Сборка .exe (Windows)
-
-```bash
-pip install pyinstaller pyautogui pynput pillow
-pyinstaller fist_click.spec
-```
-
-Готовый `FIST_CLICK.exe` появится в папке `dist/`.
-
----
-
 ## 📖 Использование
 
 1. Нажмите **⊕ PICK** на карточке спота, затем кликните в нужное место экрана
@@ -67,21 +49,26 @@ pyinstaller fist_click.spec
 
 ---
 
-## ⚠️ Примечания
+## 🛠️ Для разработчиков — запуск из исходников
 
-- Если глобальная горячая клавиша (F6) не работает — запустите программу от **Администратора**
-- Для запуска .exe от администратора по умолчанию: установите `uac_admin=True` в `fist_click.spec` перед сборкой
-- Минимальный интервал ограничен 50мс для предотвращения зависания
+```bash
+pip install pyautogui pynput pillow
+python fist_click.py
+```
+
+Сборка .exe вручную:
+```bash
+pip install pyinstaller
+pyinstaller fist_click.spec
+```
 
 ---
 
-## 📋 Требования
+## ⚠️ Примечания
 
-- Python 3.8+
-- `pyautogui`
-- `pynput`
-- `pillow`
-- `tkinter` (входит в стандартную поставку Python на Windows)
+- Если горячая клавиша (F6) не работает — запустите от **Администратора**
+- Антивирус может срабатывать на `.exe` собранный PyInstaller — это ложная тревога
+- Минимальный интервал ограничен 50 мс
 
 ---
 
