@@ -7,7 +7,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import subprocess
-import sys
 import os
 import zipfile
 import shutil
@@ -18,7 +17,6 @@ import winreg  # Windows only
 REPO_OWNER = "Achinsky"
 REPO_NAME  = "FIST-CLICK"
 GITHUB_ZIP = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/main.zip"
-PYTHON_URL = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
 
 C = {
     "bg":     "#0D0D0D",
@@ -34,7 +32,7 @@ C = {
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-def find_python() -> str | None:
+def find_python():
     """Finds python.exe in PATH and Windows registry."""
     for cmd in ("py", "python", "python3"):
         try:
@@ -66,7 +64,7 @@ def find_python() -> str | None:
     return None
 
 
-def pip_install(python: str, packages: list, log_fn):
+def pip_install(python, packages, log_fn):
     log_fn(f"  pip install {' '.join(packages)}")
     result = subprocess.run(
         [python, "-m", "pip", "install", "--upgrade", *packages],
@@ -81,9 +79,13 @@ def pip_install(python: str, packages: list, log_fn):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ProgressBar(tk.Canvas):
+    """Градиентный прогресс-бар на Canvas.
+    bg НЕ передаётся в __init__ — берётся из kw или дефолт bar_bg.
+    """
     def __init__(self, parent, **kw):
-        super().__init__(parent, height=6, bg=C["bar_bg"],
-                         highlightthickness=0, **kw)
+        # Извлекаем bg из kw чтобы не было конфликта при передаче в super()
+        bg = kw.pop("bg", C["bar_bg"])
+        super().__init__(parent, height=6, bg=bg, highlightthickness=0, **kw)
         self._pct = 0
         self.bind("<Configure>", lambda e: self._redraw())
 
@@ -125,6 +127,8 @@ class Installer:
 
     def _build_ui(self):
         root = self.root
+
+        # ── Заголовок ────────────────────────────────────────────────────────
         hdr = tk.Frame(root, bg=C["bg"], pady=20)
         hdr.pack(fill="x", padx=24)
         tk.Label(hdr, text="FIST", font=("Courier New", 26, "bold"),
@@ -136,6 +140,7 @@ class Installer:
 
         tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
 
+        # ── Папка установки ──────────────────────────────────────────────────
         tk.Label(root, text="ПАПКА УСТАНОВКИ",
                  font=("Courier New", 8, "bold"), fg=C["text2"], bg=C["bg"]
                  ).pack(anchor="w", padx=24)
@@ -151,12 +156,13 @@ class Installer:
                  insertbackground=C["text"], relief="flat", bd=0,
                  highlightbackground=C["border"], highlightthickness=1,
                  ).pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
-        tk.Button(path_row, text="📁",
+        tk.Button(path_row, text="\U0001f4c1",
                   font=("Courier New", 11), fg=C["text"], bg=C["card"],
                   activebackground=C["border"], relief="flat", bd=0,
                   padx=10, pady=5, cursor="hand2", command=self._browse,
                   ).pack(side="left")
 
+        # ── Опции ────────────────────────────────────────────────────────────
         self.shortcut_var  = tk.BooleanVar(value=True)
         self.startmenu_var = tk.BooleanVar(value=True)
         opts = tk.Frame(root, bg=C["bg"])
@@ -173,6 +179,7 @@ class Installer:
                            relief="flat", bd=0, cursor="hand2",
                            ).pack(side="left")
 
+        # ── Шаги установки ───────────────────────────────────────────────────
         tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
         tk.Label(root, text="ЭТАПЫ УСТАНОВКИ",
                  font=("Courier New", 8, "bold"), fg=C["text2"], bg=C["bg"]
@@ -190,7 +197,7 @@ class Installer:
         ]:
             row = tk.Frame(steps_frame, bg=C["bg"])
             row.pack(fill="x", pady=2)
-            dot = tk.Label(row, text="○", font=("Courier New", 11),
+            dot = tk.Label(row, text="\u25cb", font=("Courier New", 11),
                            fg=C["text3"], bg=C["bg"], width=2)
             dot.pack(side="left")
             lbl = tk.Label(row, text=text, font=("Courier New", 9),
@@ -198,16 +205,21 @@ class Installer:
             lbl.pack(side="left")
             self.step_labels.append((dot, lbl))
 
+        # ── Прогресс-бар ─────────────────────────────────────────────────────
+        # bg передаётся один раз — через kw, внутри ProgressBar извлекается pop()
         self.progress = ProgressBar(root, bg=C["bar_bg"])
         self.progress.pack(fill="x", padx=24, pady=(0, 6))
+
         self.progress_lbl = tk.Label(root, text="Готов к установке",
                                      font=("Courier New", 8),
                                      fg=C["text2"], bg=C["bg"])
         self.progress_lbl.pack(anchor="w", padx=24, pady=(0, 18))
+
         tk.Frame(root, bg=C["border"], height=1).pack(fill="x", padx=24, pady=(0, 18))
 
+        # ── Кнопка установки ─────────────────────────────────────────────────
         self.install_btn = tk.Button(
-            root, text="▶  УСТАНОВИТЬ",
+            root, text="\u25b6  УСТАНОВИТЬ",
             font=("Courier New", 13, "bold"),
             fg=C["bg"], bg=C["green"],
             activebackground="#25A244", activeforeground=C["bg"],
@@ -215,6 +227,8 @@ class Installer:
             cursor="hand2", command=self._start_install,
         )
         self.install_btn.pack(fill="x", padx=24, pady=(0, 20))
+
+    # ── Вспомогательные методы ───────────────────────────────────────────────
 
     def _browse(self):
         path = filedialog.askdirectory(title="Выберите папку установки")
@@ -224,10 +238,10 @@ class Installer:
     def _set_step(self, index, state):
         dot, lbl = self.step_labels[index]
         cfg = {
-            "wait":   ("○", C["text3"], C["text3"]),
-            "active": ("◉", C["accent"], C["text"]),
-            "done":   ("✓", C["green"],  C["text"]),
-            "error":  ("✗", C["accent"], C["accent"]),
+            "wait":   ("\u25cb", C["text3"], C["text3"]),
+            "active": ("\u25c9", C["accent"], C["text"]),
+            "done":   ("\u2713", C["green"],  C["text"]),
+            "error":  ("\u2717", C["accent"], C["accent"]),
         }[state]
         dot.config(text=cfg[0], fg=cfg[1])
         lbl.config(fg=cfg[2])
@@ -242,8 +256,10 @@ class Installer:
     def _mark_step(self, index, state):
         self.root.after(0, lambda: self._set_step(index, state))
 
+    # ── Установка ────────────────────────────────────────────────────────────
+
     def _start_install(self):
-        self.install_btn.config(state="disabled", text="Установка…")
+        self.install_btn.config(state="disabled", text="Установка\u2026")
         threading.Thread(target=self._install, daemon=True).start()
 
     def _install(self):
@@ -258,7 +274,7 @@ class Installer:
         temp_dir = os.path.join(install_dir, "_tmp")
         os.makedirs(temp_dir, exist_ok=True)
 
-        # Step 0: Python
+        # Шаг 0: Python
         self._mark_step(0, "active")
         self._log("Поиск Python...", 0.02)
         python = find_python()
@@ -269,28 +285,29 @@ class Installer:
                 "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe",
                 py_exe,
                 reporthook=lambda b, bs, ts: self._log(
-                    f"Скачивание Python: {min(b*bs,ts)//1024}/{ts//1024} КБ",
+                    f"Скачивание Python: {min(b*bs, ts)//1024}/{ts//1024} КБ",
                     0.05 + 0.1 * (b * bs / max(ts, 1))
                 )
             )
             self._log("Установка Python...", 0.15)
-            subprocess.run([py_exe, "/quiet", "InstallAllUsers=0",
-                            "PrependPath=1", "Include_pip=1"],
-                           check=True, timeout=300)
+            subprocess.run(
+                [py_exe, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_pip=1"],
+                check=True, timeout=300
+            )
             python = find_python()
             if python is None:
                 raise RuntimeError("Повторно запустите установщик после установки Python.")
         self._mark_step(0, "done")
-        self._log("Python найден ✓", 0.20)
+        self._log("Python найден \u2713", 0.20)
 
-        # Step 1: Download
+        # Шаг 1: Скачать исходники
         self._mark_step(1, "active")
         self._log("Скачивание с GitHub...", 0.22)
         zip_path = os.path.join(temp_dir, "src.zip")
         urllib.request.urlretrieve(
             GITHUB_ZIP, zip_path,
             reporthook=lambda b, bs, ts: self._log(
-                f"Скачивание: {min(b*bs, max(ts,1))//1024} КБ",
+                f"Скачивание: {min(b*bs, max(ts, 1))//1024} КБ",
                 0.22 + 0.14 * (b * bs / max(ts, 1))
             )
         )
@@ -309,9 +326,9 @@ class Installer:
             shutil.rmtree(src_dir)
         shutil.copytree(extracted, src_dir)
         self._mark_step(1, "done")
-        self._log("Исходники скачаны ✓", 0.38)
+        self._log("Исходники скачаны \u2713", 0.38)
 
-        # Step 2: Deps
+        # Шаг 2: Зависимости
         self._mark_step(2, "active")
         for pkg, pct, msg in [
             ("pip",         0.42, "pip..."),
@@ -324,14 +341,14 @@ class Installer:
             args = ["--upgrade", pkg] if pkg == "pip" else [pkg]
             pip_install(python, args, lambda m: None)
         self._mark_step(2, "done")
-        self._log("Зависимости установлены ✓", 0.68)
+        self._log("Зависимости установлены \u2713", 0.68)
 
-        # Step 3: Build
+        # Шаг 3: Сборка exe
         self._mark_step(3, "active")
         self._log("Сборка FIST_CLICK.exe... (1-3 мин)", 0.70)
         spec = os.path.join(src_dir, "fist_click.spec")
-        src  = os.path.join(src_dir, "fist_click.py")
-        build_src = spec if os.path.exists(spec) else src
+        py   = os.path.join(src_dir, "fist_click.py")
+        build_src = spec if os.path.exists(spec) else py
         res = subprocess.run(
             [python, "-m", "PyInstaller", "--noconfirm",
              "--distpath", install_dir,
@@ -353,9 +370,9 @@ class Installer:
         if not os.path.exists(exe_path):
             raise RuntimeError("FIST_CLICK.exe не найден после сборки.")
         self._mark_step(3, "done")
-        self._log("EXE собран ✓", 0.88)
+        self._log("EXE собран \u2713", 0.88)
 
-        # Step 4: Shortcuts
+        # Шаг 4: Ярлыки
         self._mark_step(4, "active")
         self._log("Создание ярлыков...", 0.91)
         try:
@@ -374,8 +391,10 @@ class Installer:
                 sc.Description = "FIST CLICK Auto Clicker"
                 sc.save()
             if self.startmenu_var.get():
-                sm = os.path.join(os.environ.get("APPDATA", ""),
-                                  r"Microsoft\Windows\Start Menu\Programs\FIST CLICK")
+                sm = os.path.join(
+                    os.environ.get("APPDATA", ""),
+                    r"Microsoft\Windows\Start Menu\Programs\FIST CLICK"
+                )
                 os.makedirs(sm, exist_ok=True)
                 lnk = os.path.join(sm, "FIST CLICK.lnk")
                 sc = shell.CreateShortCut(lnk)
@@ -383,16 +402,18 @@ class Installer:
                 sc.WorkingDirectory = install_dir
                 sc.save()
         except Exception:
-            pass  # Shortcuts are optional
+            pass  # ярлыки опциональны
         self._mark_step(4, "done")
-        self._log("Ярлыки созданы ✓", 1.0)
+        self._log("Ярлыки созданы \u2713", 1.0)
 
         shutil.rmtree(temp_dir, ignore_errors=True)
         self.root.after(0, lambda: self._on_done(exe_path))
 
+    # ── Финал ────────────────────────────────────────────────────────────────
+
     def _on_done(self, exe_path):
         self.install_btn.config(
-            text="✓  ОТКРЫТЬ FIST CLICK",
+            text="\u2713  ОТКРЫТЬ FIST CLICK",
             bg=C["green"], state="normal",
             command=lambda: os.startfile(exe_path),
         )
@@ -406,13 +427,15 @@ class Installer:
         )
 
     def _on_error(self, msg):
-        self.install_btn.config(state="normal",
-                                text="▶  УСТАНОВИТЬ",
-                                bg=C["accent"])
+        self.install_btn.config(
+            state="normal",
+            text="\u25b6  УСТАНОВИТЬ",
+            bg=C["accent"]
+        )
         self.progress_lbl.config(text="Ошибка установки", fg=C["accent"])
         for dot, lbl in self.step_labels:
-            if dot.cget("text") == "◉":
-                dot.config(text="✗", fg=C["accent"])
+            if dot.cget("text") == "\u25c9":
+                dot.config(text="\u2717", fg=C["accent"])
                 lbl.config(fg=C["accent"])
         messagebox.showerror("Ошибка установки", f"Произошла ошибка:\n\n{msg}")
 
